@@ -2,7 +2,7 @@
 
 ---
 
-![OnlineASRProcessor Flow](./images/OnlineASRProcessor_Flow.png)
+![OnlineASRProcessor Flow](../images/OnlineASRProcessor_flowchart.png)
 
 > This diagram illustrates how audio and text are processed in chunks:
 > - Audio is appended and processed via ASR.
