@@ -42,7 +42,6 @@ class ASRBase:
 
         self.model = self.load_model(modelsize, cache_dir, model_dir)
 
-
     def load_model(self, modelsize, cache_dir):
         raise NotImplemented("must be implemented in the child class")
 
@@ -95,17 +94,17 @@ class WhisperTimestampedASR(ASRBase):
         self.transcribe_kargs["task"] = "translate"
 
 
-
-
 class FasterWhisperASR(ASRBase):
-    """Uses faster-whisper library as the backend. Works much faster, appx 4-times (in offline mode). For GPU, it requires installation with a specific CUDNN version.
-    """
+    """Uses faster-whisper library as the backend.
 
+    Works much faster, appx 4-times (in offline mode).
+    For GPU, it requires installation with a specific CUDNN version.
+    """
     sep = ""
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         from faster_whisper import WhisperModel
-#        logging.getLogger("faster_whisper").setLevel(logger.level)
+        # logging.getLogger("faster_whisper").setLevel(logger.level)
         if model_dir is not None:
             logger.debug(f"Loading whisper model from model_dir {model_dir}. modelsize and cache_dir parameters are not used.")
             model_size_or_path = model_dir
@@ -114,38 +113,42 @@ class FasterWhisperASR(ASRBase):
         else:
             raise ValueError("modelsize or model_dir parameter must be set")
 
-
         # this worked fast and reliably on NVIDIA L40
         model = WhisperModel(model_size_or_path, device="cuda", compute_type="float16", download_root=cache_dir)
 
         # or run on GPU with INT8
         # tested: the transcripts were different, probably worse than with FP16, and it was slightly (appx 20%) slower
-        #model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
+        # model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
 
         # or run on CPU with INT8
         # tested: works, but slow, appx 10-times than cuda FP16
-#        model = WhisperModel(modelsize, device="cpu", compute_type="int8") #, download_root="faster-disk-cache-dir/")
+        # model = WhisperModel(modelsize, device="cpu", compute_type="int8") #, download_root="faster-disk-cache-dir/")
         return model
 
     def transcribe(self, audio, init_prompt=""):
 
         # tested: beam_size=5 is faster and better than 1 (on one 200 second document from En ESIC, min chunk 0.01)
-        segments, info = self.model.transcribe(audio, language=self.original_language, initial_prompt=init_prompt, beam_size=5, word_timestamps=True, condition_on_previous_text=True, **self.transcribe_kargs)
-        #print(info)  # info contains language detection result
+        segments, info = self.model.transcribe(
+            audio,
+            language=self.original_language,
+            initial_prompt=init_prompt,
+            beam_size=5,
+            word_timestamps=True,
+            condition_on_previous_text=True,
+            **self.transcribe_kargs
+        )
 
         return list(segments)
 
     def ts_words(self, segments):
-        o = []
+        tokens = []
         for segment in segments:
             for word in segment.words:
                 if segment.no_speech_prob > 0.9:
                     continue
                 # not stripping the spaces -- should not be merged with them!
-                w = word.word
-                t = (word.start, word.end, w)
-                o.append(t)
-        return o
+                tokens.append((word.start, word.end, word.word))
+        return tokens
 
     def segments_end_ts(self, res):
         return [s.end for s in res]
@@ -156,27 +159,27 @@ class FasterWhisperASR(ASRBase):
     def set_translate_task(self):
         self.transcribe_kargs["task"] = "translate"
 
+
 class MLXWhisper(ASRBase):
     """
     Uses MLX Whisper library as the backend, optimized for Apple Silicon.
     Models available: https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc
     Significantly faster than faster-whisper (without CUDA) on Apple M1.
     """
-
     sep = " "
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         """
-            Loads the MLX-compatible Whisper model.
+        Loads the MLX-compatible Whisper model.
 
-            Args:
-                modelsize (str, optional): The size or name of the Whisper model to load.
-                    If provided, it will be translated to an MLX-compatible model path using the `translate_model_name` method.
-                    Example: "large-v3-turbo" -> "mlx-community/whisper-large-v3-turbo".
-                cache_dir (str, optional): Path to the directory for caching models.
-                    **Note**: This is not supported by MLX Whisper and will be ignored.
-                model_dir (str, optional): Direct path to a custom model directory.
-                    If specified, it overrides the `modelsize` parameter.
+        Args:
+            modelsize (str, optional): The size or name of the Whisper model to load.
+                If provided, it will be translated to an MLX-compatible model path using the `translate_model_name` method.
+                Example: "large-v3-turbo" -> "mlx-community/whisper-large-v3-turbo".
+            cache_dir (str, optional): Path to the directory for caching models.
+                **Note**: This is not supported by MLX Whisper and will be ignored.
+            model_dir (str, optional): Direct path to a custom model directory.
+                If specified, it overrides the `modelsize` parameter.
         """
         from mlx_whisper.transcribe import ModelHolder, transcribe
         import mlx.core as mx # Is installed with mlx-whisper
@@ -247,7 +250,6 @@ class MLXWhisper(ASRBase):
         )
         return segments.get("segments", [])
 
-
     def ts_words(self, segments):
         """
         Extract timestamped words from transcription segments and skips words with high no-speech probability.
@@ -267,6 +269,7 @@ class MLXWhisper(ASRBase):
 
     def set_translate_task(self):
         self.transcribe_kargs["task"] = "translate"
+
 
 class OpenaiApiASR(ASRBase):
     """Uses OpenAI's Whisper API for audio transcription."""
@@ -515,7 +518,6 @@ class OnlineASRProcessor:
 
     def init(self, offset=None):
         """Run this when starting or restarting processing."""
-
         # Initialize the audio buffer to an empty float32 array
         self.audio_buffer = np.array([], dtype=np.float32)
 
@@ -556,18 +558,28 @@ class OnlineASRProcessor:
         while k > 0 and self.commited[k-1][1] > self.buffer_time_offset:
             k -= 1
 
-        p = self.commited[:k]     # commited words that are not in the current buffer
-        p = [t for _, _, t in p]  # only the text
-        prompt = []
-        l = 0
-        while p and l < 200:  # 200 characters prompt size
-            x = p.pop(-1)
-            l += len(x) + 1   # +1 for the space
-            prompt.append(x)
-        non_prompt = self.commited[k:]  # commited words still the current buffer, not used as a prompt
+        # Extract committed segments up to k
+        committed = self.commited[:k]
+        # Extract text only
+        committed_texts = [t for _, _, t in committed]
 
-        # reverse the prompt to keep the order, because we popped it from the end
-        return self.asr.sep.join(prompt[::-1]), self.asr.sep.join(t for _, _, t in non_prompt)
+        # Build prompt by taking from the end until reaching MAX_PROMPT_CHARS
+        MAX_PROMPT_CHARS = 200
+        prompt_pieces = []
+        length = 0
+        while committed_texts and length < MAX_PROMPT_CHARS:  # 200 characters prompt size
+            piece = committed_texts.pop() # take the last piece
+            prompt_pieces.append(piece)
+            length += len(piece) + len(self.asr.sep) # +1 for the space
+
+        # Reverse to original order and join
+        prompt = self.asr.sep.join(reversed(prompt_pieces))
+
+        # Context (non_prompt): committed text within current buffer
+        context_segments = self.commited[k:]
+        context = self.asr.sep.join([t for _, _, t in context_segments])
+
+        return prompt, context
 
     def process_iter(self):
         """
@@ -609,7 +621,7 @@ class OnlineASRProcessor:
 
         ### when there is a newly confirmed text
         if o and self.buffer_trimming_way == "sentence":  # trim the completed sentences
-            if len(self.audio_buffer)/self.SAMPLING_RATE > self.buffer_trimming_sec:  # longer than this
+            if len(self.audio_buffer) / self.SAMPLING_RATE > self.buffer_trimming_sec:  # longer than this
                 self.chunk_completed_sentence()
 
         if self.buffer_trimming_way == "segment":
@@ -619,7 +631,7 @@ class OnlineASRProcessor:
 
         # if the audio buffer is longer than s seconds, trim it
         # default is 30 seconds
-        if len(self.audio_buffer)/self.SAMPLING_RATE > s:
+        if len(self.audio_buffer) / self.SAMPLING_RATE > s:
             self.chunk_completed_segment(res)
 
             # alternative: on any word
@@ -672,20 +684,30 @@ class OnlineASRProcessor:
         Trim audio and transcript buffers based on segment boundaries
         detected from ASR result.
 
+        *** Also ensures chunking happens if audio buffer exceeds a time limit.
+
         - Uses the second-to-last segment end time (if possible) to trim buffers.
-        - Ensures we don’t trim beyond the latest committed word’s end time.
+        - Ensures we don't trim beyond the latest committed word's end time.
         - This method is used when buffer_trimming is set to "segment".
 
         Args:
             res: The ASR model's result from transcribe()
         """
-        if self.commited == []: return
+        buffer_duration = len(self.audio_buffer) / self.SAMPLING_RATE
+        if not self.committed:
+            if buffer_duration > self.buffer_trimming_sec:
+                chunk_time = self.buffer_time_offset + (buffer_duration / 2)
+                logger.debug(f"--- No speech detected, forced chunking at {chunk_time:.2f}")
+                self.chunk_at(chunk_time)
+            return
 
+        logger.debug("Processing committed tokens for segmenting")
         # Get the end timestamps of segments from the ASR result
         # Example: [4.2, 8.7, 12.3] represents the end times of segments
         ends = self.asr.segments_end_ts(res)
 
-        t = self.commited[-1][1]
+        last_committed_time = self.commited[-1][1]
+        chunk_done = False
 
         # If there are at least two segments
         if len(ends) > 1:
@@ -694,17 +716,24 @@ class OnlineASRProcessor:
             # If the segment boundary is later than the end time of the currently confirmed text,
             # it means it has not been confirmed yet and should not be trimmed.
             e = ends[-2] + self.buffer_time_offset
-            while len(ends) > 2 and e > t:
+            while len(ends) > 2 and e > last_committed_time:
                 ends.pop(-1)
                 e = ends[-2] + self.buffer_time_offset
 
-            if e <= t:
+            if e <= last_committed_time:
                 logger.debug(f"--- segment chunked at {e:2.2f}")
                 self.chunk_at(e)
+                chunk_done = True
             else:
                 logger.debug(f"--- last segment not within commited area")
         else:
             logger.debug(f"--- not enough segments to chunk")
+
+        if not chunk_done and buffer_duration > self.buffer_trimming_sec:
+            logger.debug(f"--- Buffer too large, chunking at last committed time {last_committed_time:.2f}")
+            self.chunk_at(last_committed_time)
+
+        logger.debug("Segment chunking complete")
 
     def chunk_at(self, time):
         """
