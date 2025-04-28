@@ -858,7 +858,8 @@ class VACOnlineASRProcessor(OnlineASRProcessor):
             model='silero_vad'
         )
         from silero_vad_iterator import FixedVADIterator
-        self.vac = FixedVADIterator(model)  # we use the default options there: 500ms silence, 100ms padding, etc.
+        # we use the default options there: 500ms silence, 100ms padding, etc.
+        self.vac = FixedVADIterator(model)
 
         self.logfile = self.online.logfile
         self.init()
@@ -866,49 +867,56 @@ class VACOnlineASRProcessor(OnlineASRProcessor):
     def init(self):
         self.online.init()
         self.vac.reset_states()
-        self.current_online_chunk_buffer_size = 0
+        self.current_online_chunk_buffer_size = 0  # 目前累積多少 sample 給 ASR。
 
         self.is_currently_final = False
 
         self.status = None  # or "voice" or "nonvoice"
-        self.audio_buffer = np.array([],dtype=np.float32)
-        self.buffer_offset = 0  # in frames
+        self.audio_buffer = np.array([], dtype=np.float32)
+        self.buffer_offset = 0  # in frames (追蹤整個 session 已經處理到第幾個 frame。)
 
     def clear_buffer(self):
+        """Clears the audio buffer and updates the buffer offset."""
         self.buffer_offset += len(self.audio_buffer)
-        self.audio_buffer = np.array([],dtype=np.float32)
-
+        self.audio_buffer = np.array([], dtype=np.float32)
 
     def insert_audio_chunk(self, audio):
         res = self.vac(audio)
         self.audio_buffer = np.append(self.audio_buffer, audio)
 
         if res is not None:
-            frame = list(res.values())[0]-self.buffer_offset
+            # frame is local buffer
+            frame = list(res.values())[0] - self.buffer_offset
+
+            # 語音開始
             if 'start' in res and 'end' not in res:
                 self.status = 'voice'
                 send_audio = self.audio_buffer[frame:]
-                self.online.init(offset=(frame+self.buffer_offset)/self.SAMPLING_RATE)
-                self.online.insert_audio_chunk(send_audio)
+                # 新的一句話
+                self.online.init(offset=(frame + self.buffer_offset)/self.SAMPLING_RATE)
+                self.online.insert_audio_chunk(send_audio) # 把從 start 起點以後的音訊送進 ASR
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.clear_buffer()
+            # 語音結束
             elif 'end' in res and 'start' not in res:
                 self.status = 'nonvoice'
                 send_audio = self.audio_buffer[:frame]
-                self.online.insert_audio_chunk(send_audio)
+                self.online.insert_audio_chunk(send_audio) # 把到 end 點為止的音訊送進 ASR
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 self.clear_buffer()
+            # 如果是 start 和 end 同時都有 (整個語音段)
             else:
-                beg = res["start"]-self.buffer_offset
-                end = res["end"]-self.buffer_offset
+                beg = res["start"] - self.buffer_offset
+                end = res["end"] - self.buffer_offset
                 self.status = 'nonvoice'
-                send_audio = self.audio_buffer[beg:end]
+                send_audio = self.audio_buffer[beg:end] # 把整段送進 ASR
                 self.online.init(offset=(beg+self.buffer_offset)/self.SAMPLING_RATE)
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True
                 self.clear_buffer()
+        # 表示還在持續偵測中
         else:
             if self.status == 'voice':
                 self.online.insert_audio_chunk(self.audio_buffer)
@@ -917,14 +925,13 @@ class VACOnlineASRProcessor(OnlineASRProcessor):
             else:
                 # We keep 1 second because VAD may later find start of voice in it.
                 # But we trim it to prevent OOM.
-                self.buffer_offset += max(0,len(self.audio_buffer)-self.SAMPLING_RATE)
+                self.buffer_offset += max(0, len(self.audio_buffer)-self.SAMPLING_RATE)
                 self.audio_buffer = self.audio_buffer[-self.SAMPLING_RATE:]
-
 
     def process_iter(self):
         if self.is_currently_final:
             return self.finish()
-        elif self.current_online_chunk_buffer_size > self.SAMPLING_RATE*self.online_chunk_size:
+        elif self.current_online_chunk_buffer_size > (self.SAMPLING_RATE * self.online_chunk_size):
             self.current_online_chunk_buffer_size = 0
             ret = self.online.process_iter()
             return ret
