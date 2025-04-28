@@ -881,6 +881,12 @@ class VACOnlineASRProcessor(OnlineASRProcessor):
         self.audio_buffer = np.array([], dtype=np.float32)
 
     def insert_audio_chunk(self, audio):
+        """
+        Process an incoming small audio chunk:
+          - run VAD on the chunk,
+          - decide whether to send the audio to the online ASR processor immediately,
+          - and/or to mark the current utterance as finished.
+        """
         res = self.vac(audio)
         self.audio_buffer = np.append(self.audio_buffer, audio)
 
@@ -929,6 +935,10 @@ class VACOnlineASRProcessor(OnlineASRProcessor):
                 self.audio_buffer = self.audio_buffer[-self.SAMPLING_RATE:]
 
     def process_iter(self):
+        """
+        Depending on the VAD status and the amount of accumulated audio,
+        process the current audio chunk.
+        """
         if self.is_currently_final:
             return self.finish()
         elif self.current_online_chunk_buffer_size > (self.SAMPLING_RATE * self.online_chunk_size):

@@ -39,8 +39,6 @@ class VADIterator:
                  speech_pad_ms: int = 100             # same
                  ):
 
-
-
         self.model = model
         self.threshold = threshold
         self.sampling_rate = sampling_rate
